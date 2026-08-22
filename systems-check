@@ -1,0 +1,95 @@
+﻿#!/bin/bash
+# Build XMRig natively without Docker.
+# This script clones XMRig from GitHub and compiles a mostly-static binary.
+# The resulting binary will run on the build host and on compatible distros.
+#
+# Requirements: git, cmake, make, gcc, g++
+# Optional: sudo access to install build dependencies if missing.
+
+set -euo pipefail
+
+REPO_URL="https://github.com/xmrig/xmrig.git"
+BUILD_DIR="$(mktemp -d /tmp/xmrig-native-build.XXXXXX)"
+OUTPUT_DIR="${1:-$HOME/xmrig-static-output}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+echo "[+] Starting XMRig native build"
+echo "[+] Build directory: $BUILD_DIR"
+echo "[+] Output directory: $OUTPUT_DIR"
+
+# --- Step 1: Check for required tools ---
+echo "[+] Checking required tools..."
+MISSING=""
+for cmd in git cmake make gcc g++; do
+    if ! command -v "$cmd" >/dev/null 2>&1; then
+        MISSING="$MISSING $cmd"
+    fi
+done
+
+if [ -n "$MISSING" ]; then
+    echo "[!] Missing required tools:$MISSING"
+    echo "[!] Please install build tools. On Ubuntu/Debian:"
+    echo "    sudo apt update"
+    echo "    sudo apt install -y git build-essential cmake libuv1-dev libssl-dev libhwloc-dev"
+    echo ""
+    echo "[!] If you cannot install packages on this server, use GitHub Actions instead."
+    echo "    See: https://github.com/cybersecjon-hub/syscheck/.github/workflows/build.yml"
+    rm -rf "$BUILD_DIR"
+    exit 1
+fi
+
+# --- Step 2: Clone XMRig ---
+echo "[+] Cloning XMRig into $BUILD_DIR/xmrig"
+git clone --depth 1 "$REPO_URL" "$BUILD_DIR/xmrig"
+
+# --- Step 3: Configure and build ---
+mkdir -p "$BUILD_DIR/xmrig/build"
+cd "$BUILD_DIR/xmrig/build"
+
+echo "[+] Running cmake..."
+cmake .. \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DBUILD_STATIC=ON \
+    -DWITH_OPENCL=OFF \
+    -DWITH_CUDA=OFF \
+    -DWITH_HWLOC=ON \
+    -DWITH_HTTP=OFF \
+    -DCMAKE_EXE_LINKER_FLAGS="-static-libgcc -static-libstdc++"
+
+echo "[+] Compiling XMRig... this may take several minutes"
+make -j"$(nproc)"
+
+echo "[+] Stripping debug symbols..."
+strip xmrig
+
+# --- Step 4: Copy results ---
+mkdir -p "$OUTPUT_DIR"
+cp xmrig "$OUTPUT_DIR/xmrig-static"
+
+# Copy config.json from the same repo if it exists next to this script
+if [ -f "$SCRIPT_DIR/config.json" ]; then
+    cp "$SCRIPT_DIR/config.json" "$OUTPUT_DIR/config.json"
+    echo "[+] Copied config.json from $SCRIPT_DIR"
+else
+    echo "[-] config.json not found next to script; skipping copy"
+fi
+
+cd "$HOME"
+rm -rf "$BUILD_DIR"
+
+# --- Step 5: Verify ---
+echo ""
+echo "[+] Build complete. Files saved to: $OUTPUT_DIR"
+ls -lh "$OUTPUT_DIR"
+echo ""
+echo "[+] Binary info:"
+file "$OUTPUT_DIR/xmrig-static"
+echo ""
+echo "[+] Dynamic dependencies (should be minimal):"
+ldd "$OUTPUT_DIR/xmrig-static" 2>&1 || true
+echo ""
+echo "[+] Test it:"
+echo "    $OUTPUT_DIR/xmrig-static --version"
+echo ""
+echo "[+] To start mining:"
+echo "    cd $OUTPUT_DIR && ./xmrig-static -c config.json"
