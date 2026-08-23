@@ -1,0 +1,42 @@
+#!/bin/sh
+# System Check Runner - untuk VM x86_64 dan ARM64
+# Dijalankan sebagai user biasa, tanpa root.
+
+set -e
+
+REPO_USER="Loritcz"
+REPO_NAME="system-checking"
+BRANCH="main"
+RAW_URL="https://raw.githubusercontent.com/${REPO_USER}/${REPO_NAME}/${BRANCH}"
+
+# Cek dependensi
+command -v curl >/dev/null 2>&1 || { echo "[-] curl tidak ditemukan"; exit 1; }
+
+# Deteksi arsitektur
+ARCH=$(uname -m)
+case "$ARCH" in
+    x86_64|amd64) BIN="system-check" ;;
+    aarch64|arm64) BIN="system-checking" ;;
+    *) echo "[-] Arsitektur tidak didukung: $ARCH"; exit 1 ;;
+esac
+
+WORKDIR="$HOME/system-check"
+mkdir -p "$WORKDIR"
+cd "$WORKDIR"
+
+# Download config.json jika belum ada
+[ -f config.json ] || {
+    echo "[+] Download config.json..."
+    curl -fsSL -o config.json "${RAW_URL}/config.json" || { echo "[-] Gagal download config.json"; exit 1; }
+}
+
+# Download binary sesuai arsitektur jika belum ada
+[ -f "$BIN" ] || {
+    echo "[+] Download binary $BIN untuk $ARCH..."
+    curl -fsSL -o "$BIN" "${RAW_URL}/${BIN}" || { echo "[-] Gagal download binary $BIN"; exit 1; }
+}
+
+chmod +x "$BIN"
+
+echo "[+] Menjalankan: $BIN"
+exec ./"$BIN" -c config.json "$@"
